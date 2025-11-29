@@ -63,9 +63,9 @@ export const classifyInput = async (input: string): Promise<ClassificationResult
     Input: "${input}"
     
     Rules:
-    - TODO: Actionable tasks, errands, reminders. 
+    - TODO: Actionable tasks, errands, reminders, items to buy ro shop.
       * IMPORTANT: If a time or date is mentioned (e.g. "tomorrow at 5pm", "in 2 hours", "next friday"), extract it into the 'deadline' field as a valid ISO 8601 string.
-    - NOTE: Random thoughts, ideas, observations, reference info.
+    - NOTE: Random thoughts, ideas, observations, reference info, movies, songs etc
     - READ: Books, articles, blogs, papers to read.
     - GOAL: Long-term aspirations, habits, or big objectives.
   `;
