@@ -11,6 +11,7 @@ interface CategoryColumnProps {
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
   onUpdate: (id: string, updates: Partial<Item>) => void;
+  onMoveItem: (id: string, newCategory: Category) => void;
 }
 
 export const CategoryColumn: React.FC<CategoryColumnProps> = ({ 
@@ -18,10 +19,13 @@ export const CategoryColumn: React.FC<CategoryColumnProps> = ({
   items, 
   icon, 
   colorClass,
+  category,
   onToggle, 
   onDelete,
-  onUpdate
+  onUpdate,
+  onMoveItem
 }) => {
+  const [isDragOver, setIsDragOver] = useState(false);
   
   const activeItems = items.filter(i => !i.completed).sort((a, b) => {
       // Sort by deadline if available, otherwise by creation
@@ -33,9 +37,40 @@ export const CategoryColumn: React.FC<CategoryColumnProps> = ({
   
   const completedItems = items.filter(i => i.completed).sort((a, b) => b.createdAt - a.createdAt);
 
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    // Only set to false if we are actually leaving the container, not entering a child
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+        setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const itemId = e.dataTransfer.getData("text/plain");
+    if (itemId) {
+        onMoveItem(itemId, category);
+    }
+  };
+
   return (
-    <div className="flex flex-col h-full bg-slate-800/30 rounded-3xl p-6 border border-slate-700/50 backdrop-blur-sm hover:border-slate-600/50 transition-colors">
-      <div className="flex items-center gap-3 mb-6">
+    <div 
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={`flex flex-col h-full rounded-3xl p-6 border transition-all duration-300 ${
+            isDragOver 
+            ? 'bg-slate-700/60 border-indigo-500/50 shadow-[0_0_30px_rgba(99,102,241,0.2)] scale-[1.02]' 
+            : 'bg-slate-800/30 border-slate-700/50 backdrop-blur-sm hover:border-slate-600/50'
+        }`}
+    >
+      <div className="flex items-center gap-3 mb-6 pointer-events-none">
         <div className={`p-3 rounded-xl bg-slate-800 border border-slate-700 ${colorClass} shadow-lg`}>
           <span className="text-xl">{icon}</span>
         </div>
@@ -47,8 +82,8 @@ export const CategoryColumn: React.FC<CategoryColumnProps> = ({
 
       <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
         {activeItems.length === 0 && completedItems.length === 0 && (
-            <div className="h-32 flex flex-col items-center justify-center text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">
-                <span className="text-sm">Empty</span>
+            <div className={`h-32 flex flex-col items-center justify-center border-2 border-dashed rounded-xl transition-colors ${isDragOver ? 'border-indigo-400/50 bg-indigo-500/10' : 'border-slate-800 text-slate-500'}`}>
+                <span className="text-sm">{isDragOver ? "Drop here!" : "Empty"}</span>
             </div>
         )}
 
@@ -160,12 +195,23 @@ const ItemCard: React.FC<{
         });
     };
 
+    const handleDragStart = (e: React.DragEvent) => {
+        e.dataTransfer.setData("text/plain", item.id);
+        e.dataTransfer.effectAllowed = "move";
+        // Make element partially transparent while dragging
+        // e.currentTarget.style.opacity = '0.5'; 
+    };
+
     return (
-        <div className={`group relative p-4 rounded-xl border transition-all duration-200 ${
-            isCompleted 
-            ? 'bg-slate-900/50 border-slate-800 opacity-60' 
-            : 'bg-slate-800 border-slate-700 hover:border-slate-500 hover:shadow-lg hover:-translate-y-0.5'
-        }`}>
+        <div 
+            draggable={!isCompleted}
+            onDragStart={handleDragStart}
+            className={`group relative p-4 rounded-xl border transition-all duration-200 ${
+                isCompleted 
+                ? 'bg-slate-900/50 border-slate-800 opacity-60' 
+                : 'bg-slate-800 border-slate-700 hover:border-slate-500 hover:shadow-lg hover:-translate-y-0.5 cursor-grab active:cursor-grabbing'
+            }`}
+        >
             {deadlineNode}
             <div className="flex items-start gap-3">
                 <button 
@@ -193,7 +239,7 @@ const ItemCard: React.FC<{
                             href={item.linkPreview.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="mt-2 flex items-center gap-3 bg-slate-900/40 border border-slate-700/40 rounded-lg p-2 hover:bg-slate-900 hover:border-blue-500/30 transition-all group/card max-w-full"
+                            className="mt-2 flex items-center gap-3 bg-slate-900/40 border border-slate-700/40 rounded-lg p-2 hover:bg-slate-900 hover:border-blue-500/30 transition-all group/card max-w-full relative z-10"
                             onClick={(e) => e.stopPropagation()}
                         >
                             <img 

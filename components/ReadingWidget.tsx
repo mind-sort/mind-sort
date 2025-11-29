@@ -19,7 +19,11 @@ export const ReadingWidget: React.FC<ReadingWidgetProps> = ({ items, blogSources
             .map(i => i.text);
             
         const result = await getReadingSuggestion(readItems, blogSources);
-        setSuggestion(result);
+        
+        if (result && result.length > 0) {
+            // Pick a random suggestion from the batch to keep it fresh even with caching
+            setSuggestion(result[Math.floor(Math.random() * result.length)]);
+        }
     } catch (e) {
         // quiet fail
     } finally {
