@@ -1,0 +1,5 @@
+{
+  "name": "MindSort - Smart Organizer",
+  "description": "An intelligent dashboard that automatically sorts your thoughts into todos, notes, reading lists, and goals using Gemini AI.",
+  "requestFramePermissions": []
+}
