@@ -7,16 +7,30 @@ interface SettingsModalProps {
   setBlogSources: (blogs: string[]) => void;
   customQuotes: string[];
   setCustomQuotes: (quotes: string[]) => void;
+  apiKey: string;
+  setApiKey: (key: string) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ 
-    isOpen, onClose, blogSources, setBlogSources, customQuotes, setCustomQuotes 
+    isOpen, onClose, blogSources, setBlogSources, customQuotes, setCustomQuotes, apiKey, setApiKey
 }) => {
-    const [activeTab, setActiveTab] = useState<'blogs' | 'quotes'>('blogs');
+    const [activeTab, setActiveTab] = useState<'connection' | 'blogs' | 'quotes'>('connection');
     const [newBlog, setNewBlog] = useState('');
     const [newQuote, setNewQuote] = useState('');
+    const [tempKey, setTempKey] = useState(apiKey);
+    const [showKey, setShowKey] = useState(false);
 
     if (!isOpen) return null;
+
+    const handleSaveKey = () => {
+        setApiKey(tempKey);
+        // Visual feedback could be added here
+    };
+
+    const handleRemoveKey = () => {
+        setApiKey('');
+        setTempKey('');
+    };
 
     const handleAddBlog = () => {
         if (newBlog.trim()) {
@@ -59,6 +73,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {/* Tabs */}
                 <div className="flex border-b border-slate-800">
                     <button 
+                        onClick={() => setActiveTab('connection')}
+                        className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'connection' ? 'bg-slate-800 text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-slate-200'}`}
+                    >
+                        Connection
+                    </button>
+                    <button 
                         onClick={() => setActiveTab('blogs')}
                         className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'blogs' ? 'bg-slate-800 text-blue-400 border-b-2 border-blue-400' : 'text-slate-400 hover:text-slate-200'}`}
                     >
@@ -74,6 +94,63 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto p-6 bg-slate-900/50">
+
+                    {activeTab === 'connection' && (
+                        <div className="space-y-6">
+                            <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
+                                <h3 className="text-indigo-300 font-semibold mb-2">Gemini API Key</h3>
+                                <p className="text-slate-400 text-xs mb-4">
+                                    To use the AI features (Smart Input, Reading Suggestions), you need a free API key from Google AI Studio.
+                                </p>
+                                
+                                <div className="space-y-3">
+                                    <div className="relative">
+                                        <input 
+                                            type={showKey ? "text" : "password"}
+                                            value={tempKey}
+                                            onChange={(e) => setTempKey(e.target.value)}
+                                            placeholder="Paste your API Key here"
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 pr-10 text-slate-200 focus:outline-none focus:border-indigo-500 text-sm font-mono"
+                                        />
+                                        <button 
+                                            onClick={() => setShowKey(!showKey)}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                                        >
+                                            {showKey ? 'Hide' : 'Show'}
+                                        </button>
+                                    </div>
+
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={handleSaveKey}
+                                            className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                                        >
+                                            {apiKey === tempKey && apiKey ? "Saved" : "Save Key"}
+                                        </button>
+                                        {apiKey && (
+                                            <button 
+                                                onClick={handleRemoveKey}
+                                                className="px-4 py-2 border border-red-500/50 text-red-400 hover:bg-red-500/10 rounded-lg text-sm transition-colors"
+                                            >
+                                                Remove
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="text-center">
+                                <a 
+                                    href="https://aistudio.google.com/app/apikey" 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-indigo-400 hover:text-indigo-300 underline"
+                                >
+                                    Get a free API key here &rarr;
+                                </a>
+                            </div>
+                        </div>
+                    )}
                     
                     {activeTab === 'blogs' && (
                         <div className="space-y-4">

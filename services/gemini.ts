@@ -1,15 +1,12 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { Category, ClassificationResult, NudgeResult, Item, ReadingSuggestion, LinkPreviewData } from "../types";
 
-const apiKey = process.env.API_KEY || ''; 
-const ai = new GoogleGenAI({ apiKey });
-
 const modelId = "gemini-2.5-flash";
 
 // --- Caches ---
 const linkPreviewCache: Record<string, LinkPreviewData> = {};
-let readingSuggestionCache: { data: ReadingSuggestion[], timestamp: number } | null = null;
-const CACHE_TTL = 1000 * 60 * 60; // 1 hour
+const READING_CACHE_KEY = 'mindsort_reading_cache';
+const READING_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 // --- Schemas ---
 
@@ -38,20 +35,17 @@ const classificationSchema: Schema = {
   required: ["category", "refinedText", "emoji"],
 };
 
-const nudgeSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    message: {
-      type: Type.STRING,
-      description: "The motivational quote or gentle reminder text.",
-    },
-    type: {
-      type: Type.STRING,
-      enum: ["motivation", "reminder", "wisdom"],
-      description: "The type of nudge.",
+// --- Helpers ---
+
+const handleError = (error: any) => {
+    const msg = error.message || '';
+    if (msg.includes('400') || msg.includes('API key not valid') || msg.includes('API_KEY_INVALID')) {
+        throw new Error("AUTH_ERROR");
     }
-  },
-  required: ["message", "type"],
+    if (msg.includes('429') || msg.includes('Quota exceeded') || msg.includes('RESOURCE_EXHAUSTED')) {
+        throw new Error("QUOTA_ERROR");
+    }
+    throw error;
 };
 
 // --- Local Fallback Logic ---
@@ -97,9 +91,10 @@ const localClassify = (input: string): ClassificationResult => {
 
 // --- Functions ---
 
-export const classifyInput = async (input: string): Promise<ClassificationResult> => {
+export const classifyInput = async (input: string, apiKey: string): Promise<ClassificationResult> => {
   if (!apiKey) return localClassify(input);
 
+  const ai = new GoogleGenAI({ apiKey });
   const now = new Date();
   const timeContext = `Current Date/Time: ${now.toLocaleString()} (ISO: ${now.toISOString()}). Weekday: ${now.toLocaleDateString('en-US', { weekday: 'long' })}.`;
 
@@ -131,79 +126,63 @@ export const classifyInput = async (input: string): Promise<ClassificationResult
     if (!text) throw new Error("No response from Gemini");
     return JSON.parse(text) as ClassificationResult;
   } catch (error) {
-    console.warn("Gemini Classification failed (likely rate limit), using local fallback.");
+    handleError(error);
     return localClassify(input);
   }
 };
 
 export const generateNudge = async (items: Item[], customQuotes: string[] = []): Promise<NudgeResult> => {
-  if (!apiKey) {
-      return fallbackNudge(customQuotes);
-  }
-
-  // Filter for context
-  const pendingTodos = items.filter(i => i.category === Category.TODO && !i.completed).map(i => i.text);
-  const goals = items.filter(i => i.category === Category.GOAL && !i.completed).map(i => i.text);
-
-  let prompt = "";
-  let userQuotesContext = "";
-  
-  if (customQuotes.length > 0) {
-    userQuotesContext = `\nThe user has these favorite quotes: [${customQuotes.join(" | ")}]. You may strictly output one of these if it fits the context perfectly, or use them as style inspiration.`;
-  }
-
-  if (pendingTodos.length > 0) {
-    prompt = `The user has these pending tasks: ${pendingTodos.slice(0, 5).join(", ")}. Give a gentle, motivating nudge or a short stoic reminder to focus. Keep it under 20 words.${userQuotesContext}`;
-  } else if (goals.length > 0) {
-    prompt = `The user is working towards these goals: ${goals.slice(0, 3).join(", ")}. Give a high-energy motivational quote related to persistence. Keep it under 20 words.${userQuotesContext}`;
-  } else {
-    prompt = `The user has a clear list. Give a short, zen quote about clarity of mind or resting.${userQuotesContext}`;
-  }
-
-  try {
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: nudgeSchema,
-        temperature: 1.0, 
-      },
-    });
-
-    const text = response.text;
-    if (!text) throw new Error("No response from Gemini");
-    return JSON.parse(text) as NudgeResult;
-  } catch (error) {
-    return fallbackNudge(customQuotes);
-  }
-};
-
-const fallbackNudge = (customQuotes: string[]): NudgeResult => {
-    if (customQuotes.length > 0) {
-        return {
-            message: customQuotes[Math.floor(Math.random() * customQuotes.length)],
-            type: "motivation"
-        };
-    }
+    // Purely local random picker - no API calls
     const defaults = [
         "Focus on the step in front of you, not the whole staircase.",
         "Small progress is still progress.",
-        "A clear mind is a powerful mind."
+        "A clear mind is a powerful mind.",
+        "Action is the antidote to despair.",
+        "The best time to plant a tree was 20 years ago. The second best time is now.",
+        "Simplicity is the ultimate sophistication.",
+        "Do less, but better.",
+        "Consistency is key.",
+        "Don't watch the clock; do what it does. Keep going.",
+        "Turn your wounds into wisdom.",
+        "Every moment is a fresh beginning.",
+        "What you do today can improve all your tomorrows."
     ];
+  
+    const pool = customQuotes.length > 0 ? [...defaults, ...customQuotes] : defaults;
+    const message = pool[Math.floor(Math.random() * pool.length)];
+  
     return {
-        message: defaults[Math.floor(Math.random() * defaults.length)],
+        message,
         type: "wisdom"
     };
 };
 
-export const getReadingSuggestion = async (userReadItems: string[], customDomains: string[] = []): Promise<ReadingSuggestion[]> => {
-  // Check Cache
-  if (readingSuggestionCache && (Date.now() - readingSuggestionCache.timestamp < CACHE_TTL)) {
-      return readingSuggestionCache.data;
+export const getReadingSuggestion = async (userReadItems: string[], customDomains: string[] = [], forceRefresh: boolean = false, apiKey: string): Promise<ReadingSuggestion[]> => {
+  // 1. Retrieve Cache from Local Storage
+  let cached: { timestamp: number, data: ReadingSuggestion[] } | null = null;
+  const cachedRaw = localStorage.getItem(READING_CACHE_KEY);
+  if (cachedRaw) {
+      try { cached = JSON.parse(cachedRaw); } catch (e) {}
   }
 
-  if (!apiKey) return getFallbackSuggestions();
+  // 2. Return Cache if valid and not forced (Filter out read items)
+  if (!forceRefresh && cached && (Date.now() - cached.timestamp < READING_CACHE_TTL)) {
+      const unreadCached = cached.data.filter(item => !userReadItems.includes(item.url));
+      if (unreadCached.length > 0) {
+        return unreadCached.slice(0, 3);
+      }
+  }
+
+  // 3. Fallback logic if API key missing
+  if (!apiKey) {
+      if (cached) {
+           const unreadExpired = cached.data.filter(item => !userReadItems.includes(item.url));
+           if (unreadExpired.length > 0) return unreadExpired.slice(0, 3);
+      }
+      return getFallbackSuggestions(userReadItems);
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
 
   const defaultDomains = [
     "karpathy.github.io",
@@ -219,10 +198,10 @@ export const getReadingSuggestion = async (userReadItems: string[], customDomain
   const searchQuery = `(${siteQuery}) "latest blog post" AI machine learning technology`;
 
   const prompt = `
-    I need 3 technical reading recommendations.
+    I need 5 technical reading recommendations.
     
     Step 1: Use Google Search to find recent/interesting blog posts from: ${targetDomains.join(", ")}. Query: '${searchQuery}'.
-    Step 2: Select 3 distinct articles.
+    Step 2: Select 5 distinct articles to ensure variety.
     
     Output a valid JSON array of objects. Do not use Markdown.
     [
@@ -242,51 +221,51 @@ export const getReadingSuggestion = async (userReadItems: string[], customDomain
     });
 
     const text = response.text || "";
-    // Clean code blocks if present
     const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
     
     let items: ReadingSuggestion[] = [];
     try {
         items = JSON.parse(cleanText);
     } catch (e) {
-        // Simple manual parse fallback if JSON fails
-        console.warn("JSON parse failed for reading list, returning fallback");
-        return getFallbackSuggestions();
+        console.warn("JSON parse failed for reading list");
     }
 
     if (!Array.isArray(items) || items.length === 0) {
-        return getFallbackSuggestions();
+        throw new Error("Invalid format or empty list");
     }
     
-    // Ensure we have 3 items
-    const validItems = items.slice(0, 3).map(i => ({
+    const validItems = items.map(i => ({
         title: i.title || "Interesting Read",
         url: i.url || "#",
         source: i.source || "Web",
         reason: i.reason || "Recommended"
     }));
 
-    // Update Cache
-    readingSuggestionCache = {
-        data: validItems,
-        timestamp: Date.now()
-    };
+    // 4. Update Cache (Persistent)
+    localStorage.setItem(READING_CACHE_KEY, JSON.stringify({
+        timestamp: Date.now(),
+        data: validItems
+    }));
 
-    return validItems;
+    return validItems.filter(i => !userReadItems.includes(i.url)).slice(0, 3);
 
   } catch (error) {
-    console.warn("Reading Suggestion API failed", error);
-    return getFallbackSuggestions();
+    handleError(error);
+    // On Failure: Use cached data if available
+    if (cached) {
+        return cached.data.filter(i => !userReadItems.includes(i.url)).slice(0, 3);
+    }
+    return getFallbackSuggestions(userReadItems);
   }
 };
 
-const getFallbackSuggestions = (): ReadingSuggestion[] => {
-    return [
+const getFallbackSuggestions = (userReadItems: string[] = []): ReadingSuggestion[] => {
+    const pool = [
         {
             title: "The Unreasonable Effectiveness of Recurrent Neural Networks",
             url: "https://karpathy.github.io/2015/05/21/rnn-effectiveness/",
             source: "Karpathy Blog",
-            reason: "A classic essential read."
+            reason: "A classic essential read on RNNs."
         },
         {
             title: "Attention Is All You Need",
@@ -298,17 +277,47 @@ const getFallbackSuggestions = (): ReadingSuggestion[] => {
             title: "Prompt Engineering Guide",
             url: "https://www.promptingguide.ai/",
             source: "PromptingGuide",
-            reason: "Learn how to communicate with AI."
+            reason: "Learn how to communicate with AI effectively."
+        },
+        {
+            title: "The Illustrated Transformer",
+            url: "http://jalammar.github.io/illustrated-transformer/",
+            source: "Jay Alammar",
+            reason: "Best visual explanation of transformers."
+        },
+        {
+            title: "OpenAI GPT-4 Technical Report",
+            url: "https://arxiv.org/abs/2303.08774",
+            source: "ArXiv",
+            reason: "Deep dive into the architecture of GPT-4."
+        },
+        {
+            title: "Distill.pub: A Gentle Introduction to Graph Neural Networks",
+            url: "https://distill.pub/2021/gnn-intro/",
+            source: "Distill",
+            reason: "Interactive article on Graph Neural Networks."
+        },
+        {
+            title: "Why AI Will Save the World",
+            url: "https://a16z.com/why-ai-will-save-the-world/",
+            source: "Marc Andreessen",
+            reason: "An optimistic perspective on AI's future."
         }
     ];
+
+    return pool
+        .filter(i => !userReadItems.includes(i.url))
+        .sort(() => 0.5 - Math.random())
+        .slice(0, 3);
 };
 
-export const getLinkPreview = async (url: string): Promise<LinkPreviewData | null> => {
+export const getLinkPreview = async (url: string, apiKey: string): Promise<LinkPreviewData | null> => {
     if (linkPreviewCache[url]) {
         return linkPreviewCache[url];
     }
 
     if (!apiKey) return null;
+    const ai = new GoogleGenAI({ apiKey });
 
     const prompt = `
         Visit this URL and provide metadata: ${url}
@@ -338,11 +347,10 @@ export const getLinkPreview = async (url: string): Promise<LinkPreviewData | nul
             description: data.description || ""
         };
 
-        // Cache it
         linkPreviewCache[url] = preview;
         return preview;
     } catch (e) {
-        // Fallback to basic object on error
+        handleError(e);
         const fallback = {
             url,
             title: url,
